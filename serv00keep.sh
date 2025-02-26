@@ -434,17 +434,10 @@ hy3p=$(sed -n '3p' hy2ip.txt)
    "route": {
        "rule_set": [
       {
-        "tag": "google",
+        "tag": "google-gemini",
         "type": "remote",
         "format": "binary",
-        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google.srs",
-        "download_detour": "direct"
-      },
-      {
-        "tag": "google-play",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google-play.srs",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google-gemini.srs",
         "download_detour": "direct"
       }
     ],
@@ -457,13 +450,9 @@ hy3p=$(sed -n '3p' hy2ip.txt)
      "outbound": "wg"
     },
     {
-     "rule_set":"google",
+     "rule_set":"google-gemini",
      "outbound": "wg"
-    },
-    {
-     "rule_set":"google-play",
-     "outbound": "wg"
-    }  
+    }
     ],
     "final": "direct"
     }  
