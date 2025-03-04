@@ -26,6 +26,7 @@ devil binexec on >/dev/null 2>&1
 USERNAME=$(whoami | tr '[:upper:]' '[:lower:]')
 HOSTNAME=$(hostname)
 snb=$(hostname | awk -F '.' '{print $1}')
+nb=$(hostname | cut -d '.' -f 1 | tr -d 's')
 if [[ "$reset" =~ ^[Yy]$ ]]; then
 #crontab -l | grep -v "serv00keep" >rmcron
 #crontab rmcron >/dev/null 2>&1
@@ -45,30 +46,28 @@ sleep 2
 devil www add ${USERNAME}.serv00.net php > /dev/null 2>&1
 FILE_PATH="${HOME}/domains/${USERNAME}.serv00.net/public_html"
 WORKDIR="${HOME}/domains/${USERNAME}.serv00.net/logs"
+[ -d "$FILE_PATH" ] || mkdir -p "$FILE_PATH"
 [ -d "$WORKDIR" ] || (mkdir -p "$WORKDIR" && chmod 777 "$WORKDIR")
 
 read_ip(){
-nb=$(echo "$HOSTNAME" | cut -d '.' -f 1 | tr -d 's')
 ym=("$HOSTNAME" "cache$nb.serv00.com" "web$nb.serv00.com")
-rm -rf ip.txt hy2ip.txt
-dig @8.8.8.8 +time=5 +short "web$nb.serv00.com" >> hy2ip.txt
-dig @8.8.8.8 +time=5 +short "$HOSTNAME" >> hy2ip.txt
-dig @8.8.8.8 +time=5 +short "cache$nb.serv00.com" >> hy2ip.txt
+rm -rf ip.txt
 for host in "${ym[@]}"; do
 response=$(curl -sL --connect-timeout 5 --max-time 7 "https://ss.fkj.pp.ua/api/getip?host=$host")
 if [[ "$response" =~ ^$|unknown|not|error ]]; then
-dig @8.8.8.8 +time=5 +short $host >> ip.txt
+dig @8.8.8.8 +time=5 +short $host | sort -u >> ip.txt
 sleep 1  
 else
-echo "$response" | while IFS='|' read -r ip status; do
+while IFS='|' read -r ip status; do
 if [[ $status == "Accessible" ]]; then
-echo "$ip: 可用"  >> ip.txt
+echo "$ip: 可用" >> ip.txt
 else
-echo "$ip: 被墙 (Argo与CDN回源节点、proxyip依旧有效)"  >> ip.txt
+echo "$ip: 被墙 (Argo与CDN回源节点、proxyip依旧有效)" >> ip.txt
 fi	
-done
+done <<< "$response"
 fi
 done
+grep ':' ip.txt | sort -u -o ip.txt
 if [[ -z "$IP" ]]; then
 IP=$(grep -m 1 "可用" ip.txt | awk -F ':' '{print $1}')
 if [ -z "$IP" ]; then
@@ -100,25 +99,6 @@ okip(){
     fi
     echo "$IP"
     }
-
-# Generating argo Config
-argo_configure() {
-  if [[ $ARGO_AUTH =~ TunnelSecret ]]; then
-    echo $ARGO_AUTH > tunnel.json
-    cat > tunnel.yml << EOF
-tunnel: $(cut -d\" -f12 <<< "$ARGO_AUTH")
-credentials-file: tunnel.json
-protocol: http2
-
-ingress:
-  - hostname: $ARGO_DOMAIN
-    service: http://localhost:$vmess_port
-    originRequest:
-      noTLSVerify: true
-  - service: http_status:404
-EOF
-  fi
-}
 
 uuidport(){
 if [[ -z "$UUID" ]]; then
@@ -214,16 +194,8 @@ export hy2_port=$udp_port
 
 download_and_run_singbox() {
 if [ ! -s sb.txt ] && [ ! -s ag.txt ]; then
-  ARCH=$(uname -m) && DOWNLOAD_DIR="." && mkdir -p "$DOWNLOAD_DIR" && FILE_INFO=()
-  if [ "$ARCH" == "arm" ] || [ "$ARCH" == "arm64" ] || [ "$ARCH" == "aarch64" ]; then
-      FILE_INFO=("https://github.com/eooce/test/releases/download/arm64/sb web" "https://github.com/eooce/test/releases/download/arm64/bot13 bot")
-  elif [ "$ARCH" == "amd64" ] || [ "$ARCH" == "x86_64" ] || [ "$ARCH" == "x86" ]; then
-      FILE_INFO=("https://github.com/yonggekkk/Cloudflare_vless_trojan/releases/download/serv00/sb web" "https://github.com/yonggekkk/Cloudflare_vless_trojan/releases/download/serv00/server bot")
-  else
-      echo "Unsupported architecture: $ARCH"
-      exit 1
-  fi
-  
+DOWNLOAD_DIR="." && mkdir -p "$DOWNLOAD_DIR" && FILE_INFO=()
+FILE_INFO=("https://github.com/yonggekkk/Cloudflare_vless_trojan/releases/download/serv00/sb web" "https://github.com/yonggekkk/Cloudflare_vless_trojan/releases/download/serv00/server bot")
 declare -A FILE_MAP
 generate_random_name() {
     local chars=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890
@@ -282,17 +254,8 @@ echo "${public_key}" > public_key.txt
 fi
 private_key=$(<private_key.txt)
 public_key=$(<public_key.txt)
-
 openssl ecparam -genkey -name prime256v1 -out "private.key"
 openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=$USERNAME.serv00.net"
-
-nb=$(hostname | cut -d '.' -f 1 | tr -d 's')
-if [[ "$nb" =~ (14|15|16) ]]; then
-ytb='"jnn-pa.googleapis.com",'
-fi
-hy1p=$(sed -n '1p' hy2ip.txt)
-hy2p=$(sed -n '2p' hy2ip.txt)
-hy3p=$(sed -n '3p' hy2ip.txt)
   cat > config.json << EOF
 {
   "log": {
@@ -302,9 +265,9 @@ hy3p=$(sed -n '3p' hy2ip.txt)
   },
     "inbounds": [
     {
-       "tag": "hysteria-in",
+       "tag": "hysteria-in1",
        "type": "hysteria2",
-       "listen": "$hy1p",
+       "listen": "$(dig @8.8.8.8 +time=5 +short "web$nb.serv00.com" | sort -u)",
        "listen_port": $hy2_port,
        "users": [
          {
@@ -323,9 +286,9 @@ hy3p=$(sed -n '3p' hy2ip.txt)
         }
     },
         {
-       "tag": "hysteria-in",
+       "tag": "hysteria-in2",
        "type": "hysteria2",
-       "listen": "$hy2p",
+       "listen": "$(dig @8.8.8.8 +time=5 +short "$HOSTNAME" | sort -u)",
        "listen_port": $hy2_port,
        "users": [
          {
@@ -344,9 +307,9 @@ hy3p=$(sed -n '3p' hy2ip.txt)
         }
     },
         {
-       "tag": "hysteria-in",
+       "tag": "hysteria-in3",
        "type": "hysteria2",
-       "listen": "$hy3p",
+       "listen": "$(dig @8.8.8.8 +time=5 +short "cache$nb.serv00.com" | sort -u)",
        "listen_port": $hy2_port,
        "users": [
          {
@@ -408,7 +371,7 @@ hy3p=$(sed -n '3p' hy2ip.txt)
       }
     }
  ],
-    "outbounds": [
+     "outbounds": [
      {
         "type": "wireguard",
         "tag": "wg",
@@ -441,16 +404,20 @@ hy3p=$(sed -n '3p' hy2ip.txt)
         "download_detour": "direct"
       }
     ],
+EOF
+if [[ "$nb" =~ (14|15|16) ]]; then
+cat >> config.json <<EOF 
     "rules": [
     {
      "domain": [
-     $ytb
-     "oh.my.god"
+     "jnn-pa.googleapis.com"
       ],
      "outbound": "wg"
-    },
-    {
-     "rule_set":"google-gemini",
+     },
+     {
+     "rule_set":[
+     "google-gemini"
+     ],
      "outbound": "wg"
     }
     ],
@@ -458,6 +425,13 @@ hy3p=$(sed -n '3p' hy2ip.txt)
     }  
 }
 EOF
+else
+  cat >> config.json <<EOF
+    "final": "direct"
+    }  
+}
+EOF
+fi
 
 if ! ps aux | grep '[r]un -c con' > /dev/null; then
 ps aux | grep '[r]un -c con' | awk '{print $2}' | xargs -r kill -9 > /dev/null 2>&1
@@ -500,8 +474,6 @@ if [ -e "$(basename "${FILE_MAP[bot]}")" ]; then
     if [[ $ARGO_AUTH =~ ^[A-Z0-9a-z=]{120,250}$ ]]; then
       #args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}"
       args="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
-    elif [[ $ARGO_AUTH =~ TunnelSecret ]]; then
-      args="tunnel --edge-ip-version auto --config tunnel.yml run"
     else
      #args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile boot.log --loglevel info --url http://localhost:$vmess_port"
      args="tunnel --url http://localhost:$vmess_port --no-autoupdate --logfile boot.log --loglevel info"
@@ -522,8 +494,6 @@ else
     if [[ $ARGO_AUTH =~ ^[A-Z0-9a-z=]{120,250}$ ]]; then
       #args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}"
       args="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
-    elif [[ $ARGO_AUTH =~ TunnelSecret ]]; then
-      args="tunnel --edge-ip-version auto --config tunnel.yml run"
     else
      #args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile boot.log --loglevel info --url http://localhost:$vmess_port"
      args="tunnel --url http://localhost:$vmess_port --no-autoupdate --logfile boot.log --loglevel info"
@@ -698,16 +668,16 @@ cat > sing_box.json <<EOF
       "default": "auto",
       "outbounds": [
         "auto",
-        "vless-$NAME",
-        "vmess-$NAME",
-        "hy2-$NAME",
-"vmess-tls-argo-$NAME",
-"vmess-argo-$NAME"
+        "vless-$snb",
+        "vmess-$snb",
+        "hy2-$snb",
+"vmess-tls-argo-$snb",
+"vmess-argo-$snb"
       ]
     },
     {
       "type": "vless",
-      "tag": "vless-$NAME",
+      "tag": "vless-$snb",
       "server": "$IP",
       "server_port": $vless_port,
       "uuid": "$UUID",
@@ -730,7 +700,7 @@ cat > sing_box.json <<EOF
 {
             "server": "$IP",
             "server_port": $vmess_port,
-            "tag": "vmess-$NAME",
+            "tag": "vmess-$snb",
             "tls": {
                 "enabled": false,
                 "server_name": "www.bing.com",
@@ -757,7 +727,7 @@ cat > sing_box.json <<EOF
 
     {
         "type": "hysteria2",
-        "tag": "hy2-$NAME",
+        "tag": "hy2-$snb",
         "server": "$IP",
         "server_port": $hy2_port,
         "password": "$UUID",
@@ -773,7 +743,7 @@ cat > sing_box.json <<EOF
 {
             "server": "icook.hk",
             "server_port": 8443,
-            "tag": "vmess-tls-argo-$NAME",
+            "tag": "vmess-tls-argo-$snb",
             "tls": {
                 "enabled": true,
                 "server_name": "$argodomain",
@@ -800,7 +770,7 @@ cat > sing_box.json <<EOF
 {
             "server": "icook.hk",
             "server_port": 8880,
-            "tag": "vmess-argo-$NAME",
+            "tag": "vmess-argo-$snb",
             "tls": {
                 "enabled": false,
                 "server_name": "$argodomain",
@@ -832,11 +802,11 @@ cat > sing_box.json <<EOF
       "tag": "auto",
       "type": "urltest",
       "outbounds": [
-        "vless-$NAME",
-        "vmess-$NAME",
-        "hy2-$NAME",
-"vmess-tls-argo-$NAME",
-"vmess-argo-$NAME"
+        "vless-$snb",
+        "vmess-$snb",
+        "hy2-$snb",
+"vmess-tls-argo-$snb",
+"vmess-argo-$snb"
       ],
       "url": "https://www.gstatic.com/generate_204",
       "interval": "1m",
@@ -952,7 +922,7 @@ dns:
       - 240.0.0.0/4
 
 proxies:
-- name: vless-reality-vision-$NAME               
+- name: vless-reality-vision-$snb               
   type: vless
   server: $IP                           
   port: $vless_port                                
@@ -966,7 +936,7 @@ proxies:
     public-key: $public_key                      
   client-fingerprint: chrome                  
 
-- name: vmess-ws-$NAME                         
+- name: vmess-ws-$snb                         
   type: vmess
   server: $IP                       
   port: $vmess_port                                     
@@ -982,7 +952,7 @@ proxies:
     headers:
       Host: www.bing.com                     
 
-- name: hysteria2-$NAME                            
+- name: hysteria2-$snb                            
   type: hysteria2                                      
   server: $IP                               
   port: $hy2_port                                
@@ -993,7 +963,7 @@ proxies:
   skip-cert-verify: true
   fast-open: true
 
-- name: vmess-tls-argo-$NAME                         
+- name: vmess-tls-argo-$snb                         
   type: vmess
   server: icook.hk                        
   port: 8443                                     
@@ -1009,7 +979,7 @@ proxies:
     headers:
       Host: $argodomain
 
-- name: vmess-argo-$NAME                         
+- name: vmess-argo-$snb                         
   type: vmess
   server: icook.hk                        
   port: 8880                                     
@@ -1032,11 +1002,11 @@ proxy-groups:
   interval: 300
   strategy: round-robin
   proxies:
-    - vless-reality-vision-$NAME                              
-    - vmess-ws-$NAME
-    - hysteria2-$NAME
-    - vmess-tls-argo-$NAME
-    - vmess-argo-$NAME
+    - vless-reality-vision-$snb                              
+    - vmess-ws-$snb
+    - hysteria2-$snb
+    - vmess-tls-argo-$snb
+    - vmess-argo-$snb
 
 - name: Auto
   type: url-test
@@ -1044,11 +1014,11 @@ proxy-groups:
   interval: 300
   tolerance: 50
   proxies:
-    - vless-reality-vision-$NAME                              
-    - vmess-ws-$NAME
-    - hysteria2-$NAME
-    - vmess-tls-argo-$NAME
-    - vmess-argo-$NAME
+    - vless-reality-vision-$snb                             
+    - vmess-ws-$snb
+    - hysteria2-$snb
+    - vmess-tls-argo-$snb
+    - vmess-argo-$snb
     
 - name: Select
   type: select
@@ -1056,11 +1026,11 @@ proxy-groups:
     - Balance                                         
     - Auto
     - DIRECT
-    - vless-reality-vision-$NAME                              
-    - vmess-ws-$NAME
-    - hysteria2-$NAME
-    - vmess-tls-argo-$NAME
-    - vmess-argo-$NAME
+    - vless-reality-vision-$snb                              
+    - vmess-ws-$snb
+    - hysteria2-$snb
+    - vmess-tls-argo-$snb
+    - vmess-argo-$snb
 rules:
   - GEOIP,LAN,DIRECT
   - GEOIP,CN,DIRECT
@@ -1068,8 +1038,7 @@ rules:
   
 EOF
 
-sleep 2
-[ -d "$FILE_PATH" ] || mkdir -p "$FILE_PATH"
+rm -rf ${FILE_PATH}/*.txt
 v2sub=$(cat jh.txt)
 echo "$v2sub" > ${FILE_PATH}/${UUID}_v2sub.txt
 cat clash_meta.yaml > ${FILE_PATH}/${UUID}_clashmeta.txt
@@ -1078,13 +1047,14 @@ curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/index.html
 V2rayN_LINK="https://${USERNAME}.serv00.net/${UUID}_v2sub.txt"
 Clashmeta_LINK="https://${USERNAME}.serv00.net/${UUID}_clashmeta.txt"
 Singbox_LINK="https://${USERNAME}.serv00.net/${UUID}_singbox.txt"
-allip=$(cat hy2ip.txt)
 cat > list.txt <<EOF
 =================================================================================================
 
 当前客户端正在使用的IP：$IP
 如默认节点IP被墙，可在客户端地址更换以下其他IP
-$allip
+$(dig @8.8.8.8 +time=5 +short "web$nb.serv00.com" | sort -u)
+$(dig @8.8.8.8 +time=5 +short "$HOSTNAME" | sort -u)
+$(dig @8.8.8.8 +time=5 +short "cache$nb.serv00.com" | sort -u)
 -------------------------------------------------------------------------------------------------
 
 一、Vless-reality分享链接如下：
@@ -1175,7 +1145,6 @@ rm -rf $HOME/domains/${snb}.${USERNAME}.serv00.net/logs/*
 install_singbox() {
 cd $WORKDIR
 read_ip
-argo_configure
 uuidport
 download_and_run_singbox
 get_links
